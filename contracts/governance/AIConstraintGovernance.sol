@@ -25,6 +25,8 @@ contract AIConstraintGovernance {
                                 STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
 
+    uint256 public constant MINIMUM_HOLD = 0.001 ether;
+
     /// @notice Registry contract address
     address public immutable registry;
 
@@ -598,12 +600,24 @@ contract AIConstraintGovernance {
      * @notice Gets voting power of an address
      * @param voter The address to check
      * @return votes The voting power
-     * @dev Currently returns 1 for any address (demo), integrate with token for production
+     * @dev The number of returns is related to the amount of ETH held.
      */
     function getVotes(address voter) public view returns (uint256) {
         // In production, this should call governanceToken.balanceOf(voter)
         // or a voting escrow contract
-        return voter == address(0) ? 0 : 1;
+        if(voter == address(0)) return 0;
+        uint256 etherBalance = voter.balance;
+        if(etherBalance < MINIMUM_HOLD) {
+            return 0;
+        } else if(etherBalance >= MINIMUM_HOLD && etherBalance < 10 * MINIMUM_HOLD) {
+            return 1;
+        } else if(etherBalance >= 10 * MINIMUM_HOLD && etherBalance < 10 ** 2 * MINIMUM_HOLD) {
+            return 2;
+        } else if(etherBalance >= 10 ** 2 * MINIMUM_HOLD && etherBalance < 10 ** 4 * MINIMUM_HOLD) {
+            return 3;
+        } else {
+            return 4;
+        }
     }
 
     /**

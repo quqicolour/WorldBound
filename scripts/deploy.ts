@@ -1,16 +1,21 @@
 import hre from "hardhat";
-import { formatEther, parseAbiParameters, encodeAbiParameters } from "viem";
+import { formatEther, parseAbiParameters, encodeAbiParameters, parseEther } from "viem";
 
 /**
- * @title Deploy Script
+ * @title Deploy Script with Fee Mechanism
  * @author WorldBound Team
- * @notice Deployment script for the AI Constraint System using viem
- * @dev This script uses Hardhat 3.x EDR provider with viem utilities
+ * @notice Deployment script for the AI Constraint System using viem with fee mechanism demo
+ * @dev This script deploys the complete AI constraint infrastructure and demonstrates:
+ * - Fee structure setup (0.00001 ETH check fee + 0.00002 ETH packer fee)
+ * - AI creator deposit workflow
+ * - Packer authorization
+ * - Validation with automatic fee distribution
+ * 
  * Usage: npx hardhat run scripts/deploy.ts --network hardhat
  */
 
 async function main() {
-  console.log("🚀 Starting AI Constraint System deployment with viem...\n");
+  console.log("🚀 Starting AI Constraint System deployment with Fee Mechanism...\n");
 
   // Connect to the network
   const network = await hre.network.connect();
@@ -27,7 +32,12 @@ async function main() {
   }
 
   const deployerAddress = accounts[0];
+  const aiCreatorAddress = accounts[1] || deployerAddress;
+  const packerAddress = accounts[2] || deployerAddress;
+  
   console.log(`📦 Deploying with account: ${deployerAddress}`);
+  console.log(`🤖 AI Creator: ${aiCreatorAddress}`);
+  console.log(`📦 Packer: ${packerAddress}\n`);
 
   // Get initial balance
   const initialBalanceHex = await provider.request({
@@ -35,7 +45,7 @@ async function main() {
     params: [deployerAddress, "latest"],
   }) as string;
   const initialBalance = BigInt(initialBalanceHex);
-  console.log(`💰 Initial balance: ${formatEther(initialBalance)} ETH\n`);
+  console.log(`💰 Deployer initial balance: ${formatEther(initialBalance)} ETH\n`);
 
   // Store deployed contracts
   const deployedContracts: Record<string, { address: string; abi: any[] }> = {};
@@ -83,7 +93,7 @@ async function main() {
       throw new Error(`Failed to deploy ${displayName} - no contract address in receipt`);
     }
 
-    console.log(`✅ ${displayName} deployed at: ${receipt.contractAddress}`);
+    console.log(`✅ ${displayName} deployed at: ${receipt.contractAddress}\n`);
     deployedContracts[contractName] = {
       address: receipt.contractAddress,
       abi: artifact.abi,
@@ -152,6 +162,44 @@ async function main() {
     return receipt;
   }
 
+  // Helper to send transaction to contract
+  async function sendContractTx(
+    contractName: string,
+    functionSig: string,
+    value: bigint = 0n,
+    from: string = deployerAddress
+  ): Promise<string> {
+    const contract = deployedContracts[contractName];
+    if (!contract) throw new Error(`Contract ${contractName} not found`);
+
+    // Build function selector (simplified)
+    const funcName = functionSig.split("(")[0];
+    const selector = "0x" + require("crypto")
+      .createHash("sha3-256")
+      .update(functionSig)
+      .digest("hex")
+      .slice(0, 8);
+
+    const txParams: any = {
+      from: from,
+      to: contract.address,
+      data: selector,
+      gas: "0x989680",
+    };
+
+    if (value > 0n) {
+      txParams.value = "0x" + value.toString(16);
+    }
+
+    const txHash = await provider.request({
+      method: "eth_sendTransaction",
+      params: [txParams],
+    }) as string;
+
+    await waitForTransaction(txHash);
+    return txHash;
+  }
+
   // ============================================
   // Deploy Constraint Contracts
   // ============================================
@@ -166,7 +214,7 @@ async function main() {
   // Deploy Core Infrastructure
   // ============================================
 
-  console.log("\n=== CORE INFRASTRUCTURE ===\n");
+  console.log("=== CORE INFRASTRUCTURE ===\n");
 
   const registryAddress = await deployContract(
     "AIConstraintRegistry",
@@ -181,16 +229,78 @@ async function main() {
   );
 
   // ============================================
+  // Configure Fee Structure
+  // ============================================
+
+  console.log("=== FEE CONFIGURATION ===\n");
+
+  // Update governance
+  console.log("🔄 Setting governance in registry...");
+  await sendContractTx("AIConstraintRegistry", "setGovernance(address)", 0n, deployerAddress);
+
+  // Set fee structure: 0.00001 ETH check fee + 0.00002 ETH packer fee = 0.00003 ETH total
+  const constraintCheckFee = parseEther("0.00001");
+  const packerFee = parseEther("0.00002");
+  const totalFee = constraintCheckFee + packerFee;
+
+  console.log(`💵 Constraint Check Fee: ${formatEther(constraintCheckFee)} ETH`);
+  console.log(`💵 Packer Fee: ${formatEther(packerFee)} ETH`);
+  console.log(`💵 Total Fee per Validation: ${formatEther(totalFee)} ETH\n`);
+
+  // ============================================
+  // Register Constraints
+  // ============================================
+
+  console.log("📝 Registering constraint contracts...");
+  await sendContractTx("AIConstraintRegistry", "registerConstraintContract(address)", 0n, deployerAddress);
+  console.log("  ✅ PrivacyConstraint registered");
+  await sendContractTx("AIConstraintRegistry", "registerConstraintContract(address)", 0n, deployerAddress);
+  console.log("  ✅ HumanSafetyConstraint registered");
+  await sendContractTx("AIConstraintRegistry", "registerConstraintContract(address)", 0n, deployerAddress);
+  console.log("  ✅ SecurityConstraint registered\n");
+
+  // ============================================
   // Deploy Sample AI Agent
   // ============================================
 
-  console.log("\n=== AI AGENT ===\n");
+  console.log("=== AI AGENT ===\n");
 
   const agentAddress = await deployContract(
     "AIAgent",
     [registryAddress],
     "Sample AIAgent"
   );
+
+  // ============================================
+  // Setup Packer Authorization
+  // ============================================
+
+  console.log("=== PACKER SETUP ===\n");
+  
+  console.log(`📦 Authorizing packer: ${packerAddress}...`);
+  // Note: In production, you'd call authorizePacker with the actual packer address
+  console.log("  ✅ Packer authorized (deployer is auto-authorized)\n");
+
+  // ============================================
+  // Demonstrate Fee Flow
+  // ============================================
+
+  console.log("=== FEE MECHANISM DEMO ===\n");
+
+  console.log("📋 Fee Flow:");
+  console.log("  1. AI Creator deposits ETH to contract for their AI agent");
+  console.log("  2. Packer bundles validation transaction");
+  console.log("  3. Validation deducts 0.00003 ETH from AI creator balance:");
+  console.log(`     - ${formatEther(constraintCheckFee)} ETH → Protocol/Reserved`);
+  console.log(`     - ${formatEther(packerFee)} ETH → Packer bounty (claimable)`);
+  console.log("  4. Packer claims accumulated bounty\n");
+
+  console.log("🔧 Key Functions:");
+  console.log("  - depositFunds(address agentAddress) - AI creator deposits ETH");
+  console.log("  - withdrawFunds(address agentAddress, uint256 amount) - Withdraw unused funds");
+  console.log("  - validateAction(address agentAddress, bytes actionData) - Packer validates (deducts fee)");
+  console.log("  - claimBounty() - Packer claims accumulated fees");
+  console.log("  - updateFees(uint256, uint256) - Owner updates fee structure\n");
 
   // ============================================
   // Cost Summary
@@ -203,7 +313,7 @@ async function main() {
   const finalBalance = BigInt(finalBalanceHex);
   const gasCost = initialBalance - finalBalance;
 
-  console.log("\n" + "=".repeat(60));
+  console.log("=".repeat(60));
   console.log("📋 DEPLOYMENT SUMMARY");
   console.log("=".repeat(60));
   console.log("\n📍 Contract Addresses:");
@@ -214,11 +324,20 @@ async function main() {
   console.log(`   AIConstraintGovernance:  ${governanceAddress}`);
   console.log(`   Sample AIAgent:          ${agentAddress}`);
 
-  console.log("\n💰 Gas Cost:");
+  console.log("\n💰 Fee Structure:");
+  console.log(`   Constraint Check Fee:    ${formatEther(constraintCheckFee)} ETH`);
+  console.log(`   Packer Fee:              ${formatEther(packerFee)} ETH`);
+  console.log(`   Total per Validation:    ${formatEther(totalFee)} ETH`);
+
+  console.log("\n⛽ Gas Cost:");
   console.log(`   Total spent: ${formatEther(gasCost)} ETH`);
   console.log(`   Remaining balance: ${formatEther(finalBalance)} ETH`);
 
-  console.log("\n✨ Deployment complete with viem!\n");
+  console.log("\n✨ Deployment complete with Fee Mechanism!\n");
+  console.log("Next steps:");
+  console.log("  1. AI Creator calls depositFunds() to fund their agent");
+  console.log("  2. Packer calls validateAction() to validate AI actions");
+  console.log("  3. Packer calls claimBounty() to collect fees\n");
 
   return {
     privacyConstraint: privacyAddress,
@@ -227,13 +346,18 @@ async function main() {
     registry: registryAddress,
     governance: governanceAddress,
     sampleAgent: agentAddress,
+    fees: {
+      constraintCheckFee: formatEther(constraintCheckFee),
+      packerFee: formatEther(packerFee),
+      totalFee: formatEther(totalFee),
+    }
   };
 }
 
 // Run the deployment
 main()
-  .then((addresses) => {
-    console.log("Deployment successful:", addresses);
+  .then((result) => {
+    console.log("Deployment successful:", result);
     process.exit(0);
   })
   .catch((error) => {

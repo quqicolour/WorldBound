@@ -3,15 +3,23 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 /**
  * @title AIConstraintSystem Module
  * @author WorldBound Team
- * @notice Hardhat Ignition module for deploying the complete AI constraint system
+ * @notice Hardhat Ignition module for deploying the complete AI constraint system with fee mechanism
  * @dev This module deploys all contracts in the correct order:
  * 1. Constraint contracts (Privacy, HumanSafety, Security)
- * 2. AIConstraintRegistry
+ * 2. AIConstraintRegistry with initial fee configuration
  * 3. AIConstraintGovernance
  * 4. Sample AIAgent
  * 
+ * Fee Structure:
+ * - Constraint Check Fee: 0.00001 ETH per validation
+ * - Packer Fee: 0.00002 ETH per transaction
+ * 
  * The deployment ensures proper initialization and linking between contracts.
  */
+
+// Fee constants (in wei)
+const CONSTRAINT_CHECK_FEE = 10000000000000n; // 0.00001 ETH
+const PACKER_FEE = 20000000000000n;            // 0.00002 ETH
 
 export default buildModule("AIConstraintSystem", (m) => {
   // Deploy constraint contracts first
@@ -27,8 +35,7 @@ export default buildModule("AIConstraintSystem", (m) => {
     id: "SecurityConstraint",
   });
 
-  // Deploy registry with placeholder governance (will update after governance deploy)
-  // We use a temporary zero address that will be updated
+  // Deploy registry with deployer as initial governance (will update after governance deploy)
   const registry = m.contract("AIConstraintRegistry", [m.getAccount(0)], {
     id: "AIConstraintRegistry",
   });
@@ -48,6 +55,18 @@ export default buildModule("AIConstraintSystem", (m) => {
     id: "SetGovernance",
   });
 
+  // Set initial fee structure
+  // constraintCheckFee = 0.00001 ETH, packerFee = 0.00002 ETH
+  const setFees = m.call(
+    registry, 
+    "updateFees", 
+    [CONSTRAINT_CHECK_FEE, PACKER_FEE], 
+    {
+      id: "SetFees",
+      after: [setGovernance],
+    }
+  );
+
   // Register constraint contracts with the registry
   const registerPrivacy = m.call(
     registry,
@@ -55,7 +74,7 @@ export default buildModule("AIConstraintSystem", (m) => {
     [privacyConstraint],
     {
       id: "RegisterPrivacyConstraint",
-      after: [setGovernance],
+      after: [setFees],
     }
   );
 
@@ -65,7 +84,7 @@ export default buildModule("AIConstraintSystem", (m) => {
     [humanSafetyConstraint],
     {
       id: "RegisterHumanSafetyConstraint",
-      after: [setGovernance],
+      after: [setFees],
     }
   );
 
@@ -75,14 +94,14 @@ export default buildModule("AIConstraintSystem", (m) => {
     [securityConstraint],
     {
       id: "RegisterSecurityConstraint",
-      after: [setGovernance],
+      after: [setFees],
     }
   );
 
   // Deploy a sample AI agent
   const sampleAgent = m.contract("AIAgent", [registry], {
     id: "SampleAIAgent",
-    after: [setGovernance],
+    after: [setFees],
   });
 
   return {

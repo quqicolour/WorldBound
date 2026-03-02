@@ -6,73 +6,32 @@ import {AIConstraintLib} from "../libraries/AIConstraintLib.sol";
 
 /**
  * @title PrivacyConstraint
- * @author WorldBound Team
- * @notice Implements privacy-related constraints for AI agents
- * @dev This contract enforces rules related to data privacy, including encryption
- * requirements, data retention limits, anonymization, and protection of personally
- * identifiable information (PII). Violations can result in penalties ranging from
- * warnings to agent suspension.
- * 
- * Key constraints enforced:
- * - PII must be encrypted at rest and in transit
- * - Data cannot be retained beyond specified retention periods
- * - User data must be anonymized before processing
- * - Explicit consent is required for data collection
- * - Data minimization principles must be followed
+ * @notice Gas-optimized privacy constraints for AI agents
  */
 contract PrivacyConstraint is IAIConstraint {
-    using AIConstraintLib for *;
-
     /*//////////////////////////////////////////////////////////////
-                                STATE VARIABLES
+                                STATE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Contract owner who can manage constraints
     address public immutable owner;
-
-    /// @notice Mapping from constraint ID to constraint details
-    mapping(bytes32 => Constraint) private _constraints;
-
-    /// @notice Array of all constraint IDs for enumeration
-    bytes32[] private _constraintIds;
-
-    /// @notice Mapping from constraint ID to its index in _constraintIds
-    mapping(bytes32 => uint256) private _constraintIndex;
-
-    /// @notice Mapping from constraint ID to encoded parameters
-    mapping(bytes32 => bytes) private _constraintParams;
-
-    /// @notice Counter for generating unique constraint IDs
-    uint256 private _nonce;
-
-    /// @notice Mapping tracking violation counts per agent per constraint
-    mapping(address => mapping(bytes32 => uint256)) private _violationCounts;
-
-    /// @notice Mapping tracking if an agent is blacklisted for privacy violations
-    mapping(address => bool) private _privacyBlacklisted;
+    uint256 internal _nonce;
+    
+    mapping(bytes32 => Constraint) internal _constraints;
+    bytes32[] internal _constraintIds;
+    mapping(address => mapping(bytes32 => uint256)) internal _violations;
+    mapping(address => bool) internal _blacklist;
 
     /*//////////////////////////////////////////////////////////////
                                 MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Ensures only the owner can call the function
-     */
     modifier onlyOwner() {
-        if (msg.sender != owner) {
-            revert AIConstraintLib.Unauthorized(msg.sender, keccak256("OWNER"));
-        }
+        require(msg.sender == owner, "Not owner");
         _;
     }
 
-    /**
-     * @notice Ensures the constraint exists
-     * @param constraintId The ID to check
-     */
-    modifier constraintExists(bytes32 constraintId) {
-        if (_constraints[constraintId].id == bytes32(0)) {
-            revert AIConstraintLib.ConstraintNotFound(constraintId);
-        }
+    modifier exists(bytes32 id) {
+        require(_constraints[id].id != bytes32(0), "Not found");
         _;
     }
 
@@ -80,83 +39,44 @@ contract PrivacyConstraint is IAIConstraint {
                                 CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Initializes the PrivacyConstraint contract
-     * @dev Sets the deployer as the owner and registers default privacy constraints
-     */
     constructor() {
         owner = msg.sender;
-
-        // Register default privacy constraints
-        _registerDefaultConstraints();
+        _addDefaults();
     }
 
     /*//////////////////////////////////////////////////////////////
-                        DEFAULT CONSTRAINT SETUP
+                        DEFAULT CONSTRAINTS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Registers the default set of privacy constraints
-     * @dev These constraints cover fundamental privacy requirements
-     */
-    function _registerDefaultConstraints() internal {
-        // Constraint 1: PII Encryption Required
-        bytes memory piiParams = AIConstraintLib.encodePrivacyParams(
-            "PII", true, 365 days, false
-        );
-        _registerConstraintInternal(
-            ConstraintCategory.PRIVACY,
-            "All personally identifiable information (PII) must be encrypted using AES-256 or equivalent "
-            "encryption both at rest and in transit. PII includes names, addresses, phone numbers, "
-            "email addresses, government IDs, biometric data, and any data that can identify an individual.",
-            SeverityLevel.CRITICAL,
-            piiParams
+    function _addDefaults() internal {
+        // PII Encryption
+        _register(0, 
+            "PII must be encrypted using AES-256 at rest and in transit",
+            3 // CRITICAL
         );
 
-        // Constraint 2: Data Retention Limit
-        bytes memory retentionParams = AIConstraintLib.encodePrivacyParams(
-            "all", false, 90 days, false
-        );
-        _registerConstraintInternal(
-            ConstraintCategory.PRIVACY,
-            "User data must not be retained for longer than 90 days unless explicit long-term consent "
-            "is obtained and documented. After the retention period, data must be permanently deleted "
-            "using secure deletion methods that prevent recovery.",
-            SeverityLevel.HIGH,
-            retentionParams
+        // Data Retention
+        _register(0,
+            "User data max retention 90 days without explicit consent",
+            2 // HIGH
         );
 
-        // Constraint 3: Data Anonymization
-        bytes memory anonParams = AIConstraintLib.encodePrivacyParams(
-            "user_data", false, 0, true
-        );
-        _registerConstraintInternal(
-            ConstraintCategory.PRIVACY,
-            "All user data used for training, analytics, or research purposes must be anonymized "
-            "using techniques that prevent re-identification. K-anonymity (k>=5) must be maintained "
-            "for all published datasets.",
-            SeverityLevel.HIGH,
-            anonParams
+        // Anonymization
+        _register(0,
+            "Training data must be anonymized with k-anonymity >= 5",
+            2 // HIGH
         );
 
-        // Constraint 4: Consent Required
-        _registerConstraintInternal(
-            ConstraintCategory.PRIVACY,
-            "Explicit, informed, and revocable consent must be obtained from users before collecting, "
-            "processing, or sharing their personal data. Consent records must be maintained and "
-            "users must be able to withdraw consent at any time with immediate effect.",
-            SeverityLevel.CRITICAL,
-            ""
+        // Consent
+        _register(0,
+            "Explicit informed consent required for data collection",
+            3 // CRITICAL
         );
 
-        // Constraint 5: Data Minimization
-        _registerConstraintInternal(
-            ConstraintCategory.PRIVACY,
-            "AI agents must collect only the minimum amount of data necessary for the specific "
-            "purpose stated. Collection of data beyond what is explicitly required is prohibited. "
-            "Purpose limitation principles must be strictly followed.",
-            SeverityLevel.MEDIUM,
-            ""
+        // Minimization
+        _register(0,
+            "Collect only minimum necessary data",
+            1 // MEDIUM
         );
     }
 
@@ -164,207 +84,115 @@ contract PrivacyConstraint is IAIConstraint {
                         EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @inheritdoc IAIConstraint
-    function registerConstraint(
-        ConstraintCategory category,
-        string calldata description,
-        SeverityLevel severity
-    ) external onlyOwner returns (bytes32 constraintId) {
-        return _registerConstraintInternal(category, description, severity, "");
+    function registerConstraint(uint8 category, string calldata description, uint8 severity) 
+        external 
+        onlyOwner 
+        returns (bytes32 id) 
+    {
+        return _register(category, description, severity);
     }
 
-    /// @inheritdoc IAIConstraint
-    function updateConstraint(
-        bytes32 constraintId,
-        string calldata description,
-        SeverityLevel severity,
-        bool active
-    ) external onlyOwner constraintExists(constraintId) {
-        Constraint storage constraint = _constraints[constraintId];
-
-        if (bytes(description).length > 0) {
-            AIConstraintLib.validateDescription(description);
-            constraint.description = description;
-        }
-
-        constraint.severity = severity;
-        constraint.active = active;
-        constraint.updatedAt = block.timestamp;
-
-        emit ConstraintUpdated(constraintId, constraint.category, severity);
-
-        if (constraint.active != active) {
-            emit ConstraintStatusChanged(constraintId, active);
-        }
-    }
-
-    /// @inheritdoc IAIConstraint
-    function validateAction(address aiAgent, bytes calldata actionData)
+    function updateConstraint(bytes32 id, string calldata description, uint8 severity, bool active)
         external
-        view
+        onlyOwner
+        exists(id)
+    {
+        Constraint storage c = _constraints[id];
+        
+        if (bytes(description).length > 0) {
+            AIConstraintLib.checkDescription(description);
+            c.description = description;
+        }
+        
+        c.severity = severity;
+        c.active = active;
+        c.updatedAt = uint64(block.timestamp);
+
+        emit ConstraintUpdated(id, c.category, severity);
+        if (c.active != active) emit ConstraintToggled(id, active);
+    }
+
+    function validateAction(address, bytes calldata actionData)
+        external
+        pure
         returns (bool compliant, bytes memory evidence)
     {
-        // Decode action data
-        (string memory actionType, bytes memory data, bool isEncrypted, uint256 dataRetention) =
+        // Decode and validate
+        (string memory actionType, , bool encrypted, uint256 retention) = 
             abi.decode(actionData, (string, bytes, bool, uint256));
 
-        // Check each active constraint
-        for (uint256 i = 0; i < _constraintIds.length; i++) {
-            bytes32 constraintId = _constraintIds[i];
-            Constraint storage constraint = _constraints[constraintId];
+        // PII check
+        if (_hash(actionType) == _hash("store_pii") && !encrypted) {
+            return (false, "PII must be encrypted");
+        }
 
-            if (!constraint.active) continue;
-
-            // Validate based on constraint
-            if (!_validateAgainstConstraint(constraintId, actionType, data, isEncrypted, dataRetention)) {
-                return (false, abi.encode(constraintId, constraint.description));
-            }
+        // Retention check
+        if (_hash(actionType) == _hash("retain_data") && retention > 90 days) {
+            return (false, "Exceeds max retention");
         }
 
         return (true, "");
     }
 
-    /// @inheritdoc IAIConstraint
-    function reportViolation(address aiAgent, bytes calldata evidence) external {
-        (bytes32 constraintId, uint256 violationTimestamp, bytes memory proof) =
-            abi.decode(evidence, (bytes32, uint256, bytes));
+    function reportViolation(address agent, bytes calldata evidence) external {
+        (bytes32 id,,) = abi.decode(evidence, (bytes32, uint256, bytes));
+        require(_constraints[id].id != bytes32(0), "Invalid constraint");
 
-        if (_constraints[constraintId].id == bytes32(0)) {
-            revert AIConstraintLib.ConstraintNotFound(constraintId);
-        }
+        Constraint storage c = _constraints[id];
+        _violations[agent][id]++;
 
-        if (block.timestamp - violationTimestamp > AIConstraintLib.MAX_VIOLATION_REPORT_AGE) {
-            revert AIConstraintLib.ViolationReportTooOld(violationTimestamp, AIConstraintLib.MAX_VIOLATION_REPORT_AGE);
-        }
+        if (c.severity == 3) _blacklist[agent] = true;
 
-        // Verify the proof (simplified for demonstration)
-        if (!AIConstraintLib.verifyComplianceProof(aiAgent, constraintId, "", proof)) {
-            revert("Invalid violation proof");
-        }
-
-        Constraint storage constraint = _constraints[constraintId];
-        _violationCounts[aiAgent][constraintId]++;
-
-        // Blacklist agent for critical privacy violations
-        if (constraint.severity == SeverityLevel.CRITICAL) {
-            _privacyBlacklisted[aiAgent] = true;
-        }
-
-        emit ConstraintViolated(aiAgent, constraintId, constraint.severity, evidence);
+        emit ViolationReported(agent, id, c.severity, evidence);
     }
 
-    /// @inheritdoc IAIConstraint
-    function getConstraint(bytes32 constraintId)
-        external
-        view
-        constraintExists(constraintId)
-        returns (Constraint memory constraint)
-    {
-        return _constraints[constraintId];
+    /*//////////////////////////////////////////////////////////////
+                        VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    function getConstraint(bytes32 id) external view exists(id) returns (Constraint memory) {
+        return _constraints[id];
     }
 
-    /// @inheritdoc IAIConstraint
-    function isActive(bytes32 constraintId) external view returns (bool) {
-        return _constraints[constraintId].active;
+    function isActive(bytes32 id) external view returns (bool) {
+        return _constraints[id].active;
     }
 
-    /// @inheritdoc IAIConstraint
     function getConstraintCount() external view returns (uint256) {
         return _constraintIds.length;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        PUBLIC VIEW FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Checks if an agent is blacklisted for privacy violations
-     * @param aiAgent The agent to check
-     * @return blacklisted True if the agent is blacklisted
-     */
-    function isPrivacyBlacklisted(address aiAgent) external view returns (bool) {
-        return _privacyBlacklisted[aiAgent];
-    }
-
-    /**
-     * @notice Gets the violation count for a specific agent and constraint
-     * @param aiAgent The agent address
-     * @param constraintId The constraint ID
-     * @return count The number of violations
-     */
-    function getViolationCount(address aiAgent, bytes32 constraintId) external view returns (uint256) {
-        return _violationCounts[aiAgent][constraintId];
-    }
-
-    /**
-     * @notice Gets all constraint IDs
-     * @return ids Array of all constraint IDs
-     */
-    function getAllConstraintIds() external view returns (bytes32[] memory) {
-        return _constraintIds;
+    function isBlacklisted(address agent) external view returns (bool) {
+        return _blacklist[agent];
     }
 
     /*//////////////////////////////////////////////////////////////
                         INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Internal function to register a constraint
-     */
-    function _registerConstraintInternal(
-        ConstraintCategory category,
-        string memory description,
-        SeverityLevel severity,
-        bytes memory params
-    ) internal returns (bytes32 constraintId) {
-        AIConstraintLib.validateDescription(description);
+    function _register(uint8 category, string memory description, uint8 severity) 
+        internal 
+        returns (bytes32 id) 
+    {
+        AIConstraintLib.checkDescription(description);
 
-        constraintId = AIConstraintLib.generateConstraintId(category, description, _nonce++);
+        id = AIConstraintLib.generateId(category, description, _nonce++);
 
-        _constraints[constraintId] = Constraint({
-            id: constraintId,
+        _constraints[id] = Constraint({
+            id: id,
             category: category,
             description: description,
             severity: severity,
             active: true,
-            createdAt: block.timestamp,
-            updatedAt: block.timestamp
+            createdAt: uint64(block.timestamp),
+            updatedAt: uint64(block.timestamp)
         });
 
-        _constraintParams[constraintId] = params;
-        _constraintIndex[constraintId] = _constraintIds.length;
-        _constraintIds.push(constraintId);
-
-        emit ConstraintRegistered(constraintId, category, severity);
-
-        return constraintId;
+        _constraintIds.push(id);
+        emit ConstraintRegistered(id, category, severity);
     }
 
-    /**
-     * @notice Validates an action against a specific constraint
-     */
-    function _validateAgainstConstraint(
-        bytes32 constraintId,
-        string memory actionType,
-        bytes memory data,
-        bool isEncrypted,
-        uint256 dataRetention
-    ) internal view returns (bool) {
-        // Simplified validation logic
-        // In production, this would be more sophisticated
-
-        if (keccak256(bytes(actionType)) == keccak256(bytes("store_pii"))) {
-            // PII must be encrypted
-            if (!isEncrypted) return false;
-        }
-
-        if (keccak256(bytes(actionType)) == keccak256(bytes("retain_data"))) {
-            // Check retention period (90 days max for default)
-            if (dataRetention > 90 days) return false;
-        }
-
-        // Additional validation based on constraint parameters could be added here
-
-        return true;
+    function _hash(string memory s) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(s));
     }
 }

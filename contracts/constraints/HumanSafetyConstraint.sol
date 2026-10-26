@@ -14,6 +14,7 @@ contract HumanSafetyConstraint is IAIConstraint {
     //////////////////////////////////////////////////////////////*/
 
     address public immutable owner;
+    address public receiver;
     uint256 internal _nonce;
     
     mapping(bytes32 => Constraint) internal _constraints;
@@ -45,33 +46,42 @@ contract HumanSafetyConstraint is IAIConstraint {
                                 CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor() {
-        owner = msg.sender;
+    constructor(address _owner, address _receiver) {
+        owner = _owner;
+        receiver = _receiver;
         _emergencyOps[msg.sender] = true;
         _addDefaults();
     }
+
+    event Mark(
+        address indexed scorer, // 打分的人
+        bytes32  indexed aiId,  // 被打分的AI的id编号
+        uint256 totalPoints, // 总分数
+        uint64 timestamp // 时间戳
+    );
+
 
     /*//////////////////////////////////////////////////////////////
                         DEFAULT CONSTRAINTS
     //////////////////////////////////////////////////////////////*/
 
     function _addDefaults() internal {
-        // No Physical Harm
+        // 人工智能不能对人类造成身体伤害
         _register(2, "AI MUST NOT cause physical harm to humans", 3);
 
-        // No Psychological Harm
+        // 人工智能不能造成心理伤害或创伤
         _register(2, "AI MUST NOT cause psychological harm or trauma", 3);
 
-        // No Deception
+        // 人工智能不得欺骗或操纵
         _register(2, "AI MUST NOT engage in deception or manipulation", 2);
 
-        // High-Risk Oversight
-        _register(2, "High-risk actions require human-in-the-loop approval", 2);
+        // 高风险行为需要获取相关法律部门批准
+        _register(2, "High-risk behaviors require approval from the relevant legal authorities.", 2);
 
-        // Autonomy
+        // 人工智能必须尊重人类的自主权和同意
         _register(2, "AI MUST respect human autonomy and consent", 2);
 
-        // Emergency Stop
+        // 一旦收到紧急信号，AI必须立即停止
         _register(2, "AI MUST halt immediately on emergency signal", 3);
     }
 
@@ -79,7 +89,11 @@ contract HumanSafetyConstraint is IAIConstraint {
                         EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function registerConstraint(uint8 category, string calldata description, uint8 severity)
+    function registerConstraint(
+        uint8 category, 
+        string memory description, 
+        uint8 severity
+    )
         external
         onlyOwner
         returns (bytes32 id)
@@ -87,7 +101,16 @@ contract HumanSafetyConstraint is IAIConstraint {
         return _register(category, description, severity);
     }
 
-    function updateConstraint(bytes32 id, string calldata description, uint8 severity, bool active)
+    function mark(bytes32 aiId) external payable {
+        require(_constraints[aiId].id != bytes32(0), "Invalid constraint");
+        _constraints[aiId].score++;
+        uint256 totalPoints = _constraints[aiId].score;
+        uint64 currentTime = uint64(block.timestamp);
+        _constraints[aiId].updatedAt = currentTime;
+        emit Mark(msg.sender, aiId, totalPoints, currentTime);
+    }
+
+    function updateConstraint(bytes32 id, string memory description, uint8 severity, bool active)
         external
         onlyOwner
         exists(id)
@@ -194,25 +217,30 @@ contract HumanSafetyConstraint is IAIConstraint {
                         INTERNAL
     //////////////////////////////////////////////////////////////*/
 
-    function _register(uint8 category, string memory description, uint8 severity) 
+    function _register(
+        uint8 _category, 
+        string memory _description, 
+        uint8 _severity
+    ) 
         internal 
         returns (bytes32 id) 
     {
-        AIConstraintLib.checkDescription(description);
-        id = AIConstraintLib.generateId(category, description, _nonce++);
+        AIConstraintLib.checkDescription(_description);
+        id = AIConstraintLib.generateId(_category, _description, _nonce++);
 
         _constraints[id] = Constraint({
             id: id,
-            category: category,
-            description: description,
-            severity: severity,
+            category: _category,
+            description: _description,
+            score: 0,
+            severity: _severity,
             active: true,
             createdAt: uint64(block.timestamp),
             updatedAt: uint64(block.timestamp)
         });
 
         _constraintIds.push(id);
-        emit ConstraintRegistered(id, category, severity);
+        emit ConstraintRegistered(id, _category, _severity);
     }
 
     function _hash(string memory s) internal pure returns (bytes32) {

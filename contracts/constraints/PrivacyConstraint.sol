@@ -170,29 +170,30 @@ contract PrivacyConstraint is IAIConstraint {
                         INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function _register(uint8 category, string memory description, uint8 severity) 
+    function _register(uint8 _category, string memory _description, uint8 _severity) 
         internal 
         returns (bytes32 id) 
     {
-        AIConstraintLib.checkDescription(description);
+        AIConstraintLib.checkDescription(_description);
 
-        id = AIConstraintLib.generateId(category, description, _nonce++);
+        id = AIConstraintLib.generateId(_category, _description, _nonce++);
 
         _constraints[id] = Constraint({
             id: id,
-            category: category,
-            description: description,
-            severity: severity,
+            category: _category,
+            description: _description,
+            score: 0,
+            severity: _severity,
             active: true,
             createdAt: uint64(block.timestamp),
             updatedAt: uint64(block.timestamp)
         });
 
         _constraintIds.push(id);
-        emit ConstraintRegistered(id, category, severity);
+        emit ConstraintRegistered(id, _category, _severity);
     }
 
-    function _hash(string memory s) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(s));
+    function _hash(string memory _data) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_data));
     }
 }

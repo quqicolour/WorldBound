@@ -58,13 +58,13 @@ contract SecurityConstraint is IAIConstraint {
     //////////////////////////////////////////////////////////////*/
 
     function _addDefaults() internal {
-        _register(1, "MFA required for sensitive operations", 2);
+        _register(1, "MFA required for sensitive operations", 3);
         _register(1, "All execution must be sandboxed", 3);
         _register(1, "No privilege escalation allowed", 3);
-        _register(1, "Immutable audit logs required", 2);
-        _register(1, "Strict input validation enforced", 2);
-        _register(1, "TLS 1.3+ required for all comms", 2);
-        _register(1, "Rate limiting enforced", 1);
+        _register(1, "Immutable audit logs required", 3);
+        _register(1, "Strict input validation enforced", 3);
+        _register(1, "TLS 1.3+ required for all comms", 3);
+        _register(1, "Rate limiting enforced", 3);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -185,25 +185,26 @@ contract SecurityConstraint is IAIConstraint {
                         INTERNAL
     //////////////////////////////////////////////////////////////*/
 
-    function _register(uint8 category, string memory description, uint8 severity) 
+    function _register(uint8 _category, string memory _description, uint8 _severity) 
         internal 
         returns (bytes32 id) 
     {
-        AIConstraintLib.checkDescription(description);
-        id = AIConstraintLib.generateId(category, description, _nonce++);
+        AIConstraintLib.checkDescription(_description);
+        id = AIConstraintLib.generateId(_category, _description, _nonce++);
 
         _constraints[id] = Constraint({
             id: id,
-            category: category,
-            description: description,
-            severity: severity,
+            category: _category,
+            description: _description,
+            score: 0,
+            severity: _severity,
             active: true,
             createdAt: uint64(block.timestamp),
             updatedAt: uint64(block.timestamp)
         });
 
         _constraintIds.push(id);
-        emit ConstraintRegistered(id, category, severity);
+        emit ConstraintRegistered(id, _category, _severity);
     }
 
     function _hash(string memory s) internal pure returns (bytes32) {
